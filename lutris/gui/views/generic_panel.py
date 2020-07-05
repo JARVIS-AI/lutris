@@ -1,39 +1,44 @@
 """Side panel when no game is selected"""
+# Standard Library
 import json
-from gi.repository import Gtk, Gdk, Gio, Pango, GObject
+from gettext import gettext as _
+
+# Third Party Libraries
+from gi.repository import Gdk, Gio, GObject, Gtk, Pango
+
+# Lutris Modules
 from lutris import api
 from lutris.game import Game
-from lutris.util import system
-from lutris.gui.widgets.utils import (
-    get_pixbuf_for_panel,
-    get_pixbuf_for_game,
-    get_pixbuf,
-    get_main_window,
-    open_uri,
-    get_link_button,
-)
 from lutris.gui.config.system import SystemConfigDialog
+from lutris.gui.widgets.utils import (
+    get_link_button, get_main_window, get_pixbuf, get_pixbuf_for_game, get_pixbuf_for_panel, open_uri
+)
+from lutris.util import system
 
 LINKS = {
-    "floss": "https://lutris.net/games/?q=&fully-libre-filter=on&sort-by-popularity=on",
+    "floss":
+    "https://lutris.net/games/?q=&fully-libre-filter=on&sort-by-popularity=on",
     "f2p": (
         "https://lutris.net/games/?q=&all-free=on&free-filter=on&freetoplay-filter=on"
         "&pwyw-filter=on&sort-by-popularity=on"
     ),
-    "donate": "https://lutris.net/donate",
-    "forums": "https://forums.lutris.net/",
-    "discord": "https://discord.gg/Pnt5CuY",
-    "irc": "irc://irc.freenode.org:6667/lutris",
+    "donate":
+    "https://lutris.net/donate",
+    "forums":
+    "https://forums.lutris.net/",
+    "discord":
+    "https://discord.gg/Pnt5CuY",
+    "irc":
+    "irc://irc.freenode.org:6667/lutris",
 }
 
 
 class GenericPanel(Gtk.Fixed):
+
     """Side panel displayed when no game is selected"""
 
     __gtype_name__ = "LutrisPanel"
-    __gsignals__ = {
-        "running-game-selected": (GObject.SIGNAL_RUN_FIRST, None, (Game, ))
-    }
+    __gsignals__ = {"running-game-selected": (GObject.SIGNAL_RUN_FIRST, None, (Game, ))}
 
     def __init__(self, application=None):
         super().__init__(visible=True)
@@ -51,6 +56,8 @@ class GenericPanel(Gtk.Fixed):
     def set_background(self):
         """Return the background image for the panel"""
         bg_path = get_pixbuf_for_panel(self.background_id)
+        if not bg_path:
+            return
 
         style = Gtk.StyleContext()
         style.add_class(Gtk.STYLE_CLASS_VIEW)
@@ -75,15 +82,16 @@ class GenericPanel(Gtk.Fixed):
         application = Gio.Application.get_default()
         if application.running_games.get_n_items():
             running_label = Gtk.Label(visible=True)
-            running_label.set_markup("<b>Playing:</b>")
+            running_label.set_markup(_("<b>Playing:</b>"))
             self.put(running_label, 12, 355)
             self.put(self.get_running_games(), 12, 377)
 
+    def refresh(self):
+        self.place_content()
+
     def get_preferences_button(self):
-        preferences_button = Gtk.Button.new_from_icon_name(
-            "preferences-system-symbolic", Gtk.IconSize.MENU
-        )
-        preferences_button.set_tooltip_text("Preferences")
+        preferences_button = Gtk.Button.new_from_icon_name("preferences-system-symbolic", Gtk.IconSize.MENU)
+        preferences_button.set_tooltip_text(_("Preferences"))
         preferences_button.set_size_request(32, 32)
         preferences_button.props.relief = Gtk.ReliefStyle.NONE
         preferences_button.connect("clicked", self.on_preferences_clicked)
@@ -94,9 +102,7 @@ class GenericPanel(Gtk.Fixed):
         SystemConfigDialog(get_main_window(button))
 
     def create_list_widget(self, game):
-        box = Gtk.Box(
-            spacing=6, margin_top=6, margin_bottom=6, margin_right=6, margin_left=6
-        )
+        box = Gtk.Box(spacing=6, margin_top=6, margin_bottom=6, margin_right=6, margin_left=6)
         box.set_size_request(280, 32)
 
         icon = Gtk.Image.new_from_pixbuf(get_pixbuf_for_game(game.slug, "icon"))
@@ -133,14 +139,10 @@ class GenericPanel(Gtk.Fixed):
         user_info_box.pack_start(user_label, False, False, 0)
         if user_info.get("steamid"):
             steam_button = Gtk.Button(visible=True)
-            steam_button.set_image(
-                Gtk.Image.new_from_icon_name("steam-symbolic", Gtk.IconSize.MENU)
-            )
+            steam_button.set_image(Gtk.Image.new_from_icon_name("steam-symbolic", Gtk.IconSize.MENU))
             steam_button.connect(
                 "clicked",
-                lambda *x: open_uri(
-                    "https://steamcommunity.com/profiles/%s" % user_info["steamid"]
-                ),
+                lambda *x: open_uri("https://steamcommunity.com/profiles/%s" % user_info["steamid"]),
             )
             button_align = Gtk.Alignment(visible=True)
             button_align.set(1, 0, 0, 0)
@@ -153,26 +155,26 @@ class GenericPanel(Gtk.Fixed):
     def get_lutris_links(self):
         box = Gtk.VBox(spacing=6, visible=True)
 
-        donate_button = get_link_button("Support Lutris!")
+        donate_button = get_link_button(_("Support Lutris!"))
         donate_button.connect("clicked", lambda *x: open_uri(LINKS["donate"]))
         box.add(donate_button)
 
         help_label = Gtk.Label(visible=True)
-        help_label.set_markup("<b>Help:</b>")
+        help_label.set_markup(_("<b>Help:</b>"))
         help_label.set_alignment(0, 0.5)
         help_label.set_margin_top(136)
         box.add(help_label)
 
         help_box = Gtk.Box(spacing=6, visible=True)
-        forums_button = get_link_button("Forums")
+        forums_button = get_link_button(_("Forums"))
         forums_button.set_size_request(-1, -1)
         forums_button.connect("clicked", lambda *x: open_uri(LINKS["forums"]))
         help_box.add(forums_button)
-        irc_button = get_link_button("IRC")
+        irc_button = get_link_button(_("IRC"))
         irc_button.set_size_request(-1, -1)
         irc_button.connect("clicked", lambda *x: open_uri(LINKS["irc"]))
         help_box.add(irc_button)
-        discord_button = get_link_button("Discord")
+        discord_button = get_link_button(_("Discord"))
         discord_button.set_size_request(-1, -1)
         discord_button.connect("clicked", lambda *x: open_uri(LINKS["discord"]))
         help_box.add(discord_button)

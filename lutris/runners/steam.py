@@ -1,17 +1,20 @@
 """Steam for Linux runner"""
+# Standard Library
 import os
-import time
-import shlex
 import subprocess
+import time
+from gettext import gettext as _
 
+# Lutris Modules
+from lutris.command import MonitoredCommand
 from lutris.runners import NonInstallableRunnerError
 from lutris.runners.runner import Runner
-from lutris.command import MonitoredCommand
-from lutris.util.log import logger
 from lutris.util import system
+from lutris.util.log import logger
+from lutris.util.steam.appmanifest import get_path_from_appmanifest
 from lutris.util.steam.config import get_default_acf, read_config
 from lutris.util.steam.vdf import to_vdf
-from lutris.util.steam.appmanifest import get_path_from_appmanifest
+from lutris.util.strings import split_arguments
 
 
 def shutdown():
@@ -37,17 +40,16 @@ def is_running():
 
 
 class steam(Runner):
-    description = "Runs Steam for Linux games"
-    human_name = "Steam"
-    platforms = ["Linux"]
+    description = _("Runs Steam for Linux games")
+    human_name = _("Steam")
+    platforms = [_("Linux")]
     runner_executable = "steam"
-    runnable_alone = True
     game_options = [
         {
             "option": "appid",
-            "label": "Application ID",
+            "label": _("Application ID"),
             "type": "string",
-            "help": (
+            "help": _(
                 "The application ID can be retrieved from the game's "
                 "page at steampowered.com. Example: 235320 is the "
                 "app ID for <i>Original War</i> in: \n"
@@ -57,47 +59,47 @@ class steam(Runner):
         {
             "option": "args",
             "type": "string",
-            "label": "Arguments",
-            "help": (
+            "label": _("Arguments"),
+            "help": _(
                 "Command line arguments used when launching the game.\n"
                 "Ignored when Steam Big Picture mode is enabled."
             ),
         },
         {
             "option": "run_without_steam",
-            "label": "DRM free mode (Do not launch Steam)",
+            "label": _("DRM free mode (Do not launch Steam)"),
             "type": "bool",
             "default": False,
             "advanced": True,
-            "help": (
+            "help": _(
                 "Run the game directly without Steam, requires the game binary path to be set"
             ),
         },
         {
             "option": "steamless_binary",
             "type": "file",
-            "label": "Game binary path",
+            "label": _("Game binary path"),
             "advanced": True,
-            "help": "Path to the game executable (Required by DRM free mode)",
+            "help": _("Path to the game executable (Required by DRM free mode)"),
         },
     ]
     runner_options = [
         {
             "option": "quit_steam_on_exit",
-            "label": "Stop Steam after game exits",
+            "label": _("Stop Steam after game exits"),
             "type": "bool",
             "default": False,
-            "help": (
+            "help": _(
                 "Shut down Steam after the game has quit\n"
                 "(only if Steam was started by Lutris)"
             ),
         },
         {
             "option": "start_in_big_picture",
-            "label": "Start Steam in Big Picture mode",
+            "label": _("Start Steam in Big Picture mode"),
             "type": "bool",
             "default": False,
-            "help": (
+            "help": _(
                 "Launches Steam in Big Picture mode.\n"
                 "Only works if Steam is not running or "
                 "already running in Big Picture mode.\n"
@@ -106,10 +108,10 @@ class steam(Runner):
         },
         {
             "option": "steam_native_runtime",
-            "label": "Disable Steam Runtime (use native libraries)",
+            "label": _("Disable Steam Runtime (use native libraries)"),
             "type": "bool",
             "default": False,
-            "help": (
+            "help": _(
                 "Launches Steam with STEAM_RUNTIME=0. "
                 "Make sure you disabled Lutris Runtime and "
                 "have the required libraries installed."
@@ -117,10 +119,10 @@ class steam(Runner):
         },
         {
             "option": "lsi_steam",
-            "label": "Start Steam with LSI",
+            "label": _("Start Steam with LSI"),
             "type": "bool",
             "default": False,
-            "help": (
+            "help": _(
                 "Launches steam with LSI patches enabled. "
                 "Make sure Lutris Runtime is disabled and "
                 "you have LSI installed. "
@@ -130,31 +132,35 @@ class steam(Runner):
         {
             "option": "args",
             "type": "string",
-            "label": "Arguments",
+            "label": _("Arguments"),
             "advanced": True,
-            "help": ("Extra command line arguments used when " "launching Steam"),
+            "help": _("Extra command line arguments used when launching Steam"),
         },
     ]
     system_options_override = [{"option": "disable_runtime", "default": True}]
 
+    data_dir_candidates = (
+        "/usr/share/steam",
+        "/usr/local/share/steam",
+        "~/.steam",
+        "~/.local/share/steam",
+        "~/.steam/steam",
+        "~/.var/app/com.valvesoftware.Steam/data/steam",
+    )
+
     def __init__(self, config=None):
         super(steam, self).__init__(config)
-        self.own_game_remove_method = "Remove game data (through Steam)"
+        self.own_game_remove_method = _("Remove game data (through Steam)")
         self.no_game_remove_warning = True
         self.original_steampid = None
 
     @property
-    def appid(self):
-        return self.game_config.get("appid") or ""
+    def runnable_alone(self):
+        return not system.LINUX_SYSTEM.is_flatpak
 
     @property
-    def browse_dir(self):
-        """Return the path to open with the Browse Files action."""
-        if not self.is_installed():
-            installed = self.install_dialog()
-            if not installed:
-                return False
-        return self.game_path
+    def appid(self):
+        return self.game_config.get("appid") or ""
 
     def get_steam_config(self):
         """Return the "Steam" part of Steam's config.vdf as a dict."""
@@ -172,13 +178,7 @@ class steam(Runner):
     @property
     def steam_data_dir(self):
         """Return dir where Steam files lie."""
-        candidates = (
-            "~/.steam",
-            "~/.local/share/steam",
-            "~/.steam/steam",
-            "~/.var/app/com.valvesoftware.Steam/data/steam",
-        )
-        for candidate in candidates:
+        for candidate in self.data_dir_candidates:
             path = system.fix_path_case(
                 os.path.join(os.path.expanduser(candidate), "SteamApps")
             )
@@ -186,6 +186,9 @@ class steam(Runner):
                 return path[: -len("SteamApps")]
 
     def get_executable(self):
+        if system.LINUX_SYSTEM.is_flatpak:
+            # Use xdg-open for Steam URIs in Flatpak
+            return system.find_executable("xdg-open")
         if self.runner_config.get("lsi_steam") and system.find_executable("lsi-steam"):
             return system.find_executable("lsi-steam")
         runner_executable = self.runner_config.get("runner_executable")
@@ -206,9 +209,11 @@ class steam(Runner):
     def launch_args(self):
         """Provide launch arguments for Steam"""
         args = [self.get_executable()]
+        if system.LINUX_SYSTEM.is_flatpak:
+            return args
         if self.runner_config.get("start_in_big_picture"):
             args.append("-bigpicture")
-        return args + shlex.split(self.runner_config.get("args") or "")
+        return args + split_arguments(self.runner_config.get("args") or "")
 
     def get_env(self):
         env = super(steam, self).get_env()
@@ -231,11 +236,13 @@ class steam(Runner):
     def get_steamapps_dirs(self):
         """Return a list of the Steam library main + custom folders."""
         dirs = []
-
+        # Extra colon-separated compatibility tools dirs environment variable
+        if 'STEAM_EXTRA_COMPAT_TOOLS_PATHS' in os.environ:
+            dirs += os.getenv('STEAM_EXTRA_COMPAT_TOOLS_PATHS').split(':')
         # Main steamapps dir and compatibilitytools.d dir
-        if self.steam_data_dir:
+        for data_dir in self.data_dir_candidates:
             for _dir in ["SteamApps", "compatibilitytools.d"]:
-                abs_dir = os.path.join(self.steam_data_dir, _dir)
+                abs_dir = os.path.join(os.path.expanduser(data_dir), _dir)
                 abs_dir = system.fix_path_case(abs_dir)
                 if abs_dir and os.path.isdir(abs_dir):
                     dirs.append(abs_dir)
@@ -284,7 +291,7 @@ class steam(Runner):
 
     def prelaunch(self):
         def has_steam_shutdown(times=10):
-            for _ in range(times):
+            for __ in range(times):
                 time.sleep(1)
                 if not is_running():
                     return True
@@ -316,6 +323,16 @@ class steam(Runner):
         else:
             # Start through steam
 
+            if system.LINUX_SYSTEM.is_flatpak:
+                if game_args:
+                    steam_uri = "steam://run/%s//%s/" % (self.appid, game_args)
+                else:
+                    steam_uri = "steam://rungameid/%s" % self.appid
+                return {
+                    "command": self.launch_args + [steam_uri],
+                    "env": self.get_env(),
+                }
+
             # Get current steam pid to act as the root pid instead of lutris
             self.original_steampid = get_steam_pid()
             command = self.launch_args
@@ -325,9 +342,9 @@ class steam(Runner):
             else:
                 command.append("-applaunch")
                 command.append(self.appid)
-        
+
         if game_args:
-            for arg in shlex.split(game_args):
+            for arg in split_arguments(game_args):
                 command.append(arg)
 
         return {

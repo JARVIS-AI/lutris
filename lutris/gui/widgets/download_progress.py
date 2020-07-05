@@ -1,14 +1,21 @@
+# Standard Library
+from gettext import gettext as _
+
+# Third Party Libraries
 from gi.repository import GLib, GObject, Gtk, Pango
+
+# Lutris Modules
 from lutris.util.downloader import Downloader
 
 
 class DownloadProgressBox(Gtk.Box):
+
     """Progress bar used to monitor a file download."""
 
     __gsignals__ = {
-        "complete": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT,)),
-        "cancel": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT,)),
-        "error": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT,)),
+        "complete": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT, )),
+        "cancel": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT, )),
+        "error": (GObject.SignalFlags.RUN_LAST, None, (GObject.TYPE_PYOBJECT, )),
     }
 
     def __init__(self, params, cancelable=True, downloader=None):
@@ -18,7 +25,7 @@ class DownloadProgressBox(Gtk.Box):
         self.url = params.get("url")
         self.dest = params.get("dest")
         self.referer = params.get("referer")
-        title = params.get("title", "Downloading {}".format(self.url))
+        title = params.get("title", _("Downloading {}").format(self.url))
 
         self.main_label = Gtk.Label(title)
         self.main_label.set_alignment(0, 0)
@@ -37,7 +44,7 @@ class DownloadProgressBox(Gtk.Box):
         self.progressbar.set_margin_right(10)
         progress_box.pack_start(self.progressbar, True, True, 0)
 
-        self.cancel_button = Gtk.Button.new_with_mnemonic("_Cancel")
+        self.cancel_button = Gtk.Button.new_with_mnemonic(_("_Cancel"))
         self.cancel_button.connect("clicked", self.cancel)
         if not cancelable:
             self.cancel_button.set_sensitive(False)
@@ -55,9 +62,7 @@ class DownloadProgressBox(Gtk.Box):
         """Start downloading a file."""
         if not self.downloader:
             try:
-                self.downloader = Downloader(
-                    self.url, self.dest, referer=self.referer, overwrite=True
-                )
+                self.downloader = Downloader(self.url, self.dest, referer=self.referer, overwrite=True)
             except RuntimeError as ex:
                 from lutris.gui.dialogs import ErrorDialog
 
@@ -84,7 +89,7 @@ class DownloadProgressBox(Gtk.Box):
         if self.downloader.state in [self.downloader.CANCELLED, self.downloader.ERROR]:
             self.progressbar.set_fraction(0)
             if self.downloader.state == self.downloader.CANCELLED:
-                self._set_text("Download interrupted")
+                self._set_text(_("Download interrupted"))
             else:
                 self._set_text(self.downloader.error)
             if self.downloader.state == self.downloader.CANCELLED:
@@ -92,11 +97,13 @@ class DownloadProgressBox(Gtk.Box):
             return False
         self.progressbar.set_fraction(progress)
         megabytes = 1024 * 1024
-        progress_text = "%0.2f / %0.2fMB (%0.2fMB/s), %s remaining" % (
-            float(self.downloader.downloaded_size) / megabytes,
-            float(self.downloader.full_size) / megabytes,
-            float(self.downloader.average_speed) / megabytes,
-            self.downloader.time_left,
+        progress_text = _(
+            "{downloaded:0.2f} / {size:0.2f}MB ({speed:0.2f}MB/s), {time} remaining"
+        ).format(
+            downloaded=float(self.downloader.downloaded_size) / megabytes,
+            size=float(self.downloader.full_size) / megabytes,
+            speed=float(self.downloader.average_speed) / megabytes,
+            time=self.downloader.time_left,
         )
         self._set_text(progress_text)
         if self.downloader.state == self.downloader.COMPLETED:

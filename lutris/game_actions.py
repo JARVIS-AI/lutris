@@ -1,23 +1,34 @@
 """Handle game specific actions"""
+
+# Standard Library
+# pylint: disable=too-many-public-methods
 import os
 import signal
+from gettext import gettext as _
+
+# Third Party Libraries
 from gi.repository import Gio
+
+# Lutris Modules
+from lutris import pga
 from lutris.command import MonitoredCommand
 from lutris.game import Game
 from lutris.gui import dialogs
-from lutris.gui.widgets.utils import open_uri
 from lutris.gui.config.add_game import AddGameDialog
 from lutris.gui.config.edit_game import EditGameConfigDialog
-from lutris.gui.installerwindow import InstallerWindow
-from lutris.gui.dialogs.uninstall_game import UninstallGameDialog
 from lutris.gui.dialogs.log import LogWindow
-from lutris.util.system import path_exists
-from lutris.util.log import logger
+from lutris.gui.dialogs.uninstall_game import UninstallGameDialog
+from lutris.gui.installerwindow import InstallerWindow
+from lutris.gui.widgets.utils import open_uri
 from lutris.util import xdgshortcuts
+from lutris.util.log import logger
+from lutris.util.system import path_exists
 
 
 class GameActions:
+
     """Regroup a list of callbacks for a game"""
+
     def __init__(self, application=None, window=None):
         self.application = application or Gio.Application.get_default()
         self.window = window
@@ -48,101 +59,104 @@ class GameActions:
     def get_game_actions(self):
         """Return a list of game actions and their callbacks"""
         return [
+            ("play", _("Play"), self.on_game_run),
+            ("stop", _("Stop"), self.on_stop),
+            ("show_logs", _("Show logs"), self.on_show_logs),
+            ("install", _("Install"), self.on_install_clicked),
+            ("add", _("Add installed game"), self.on_add_manually),
+            ("configure", _("Configure"), self.on_edit_game_configuration),
+            ("execute-script", _("Execute script"), self.on_execute_script_clicked),
+            ("browse", _("Browse files"), self.on_browse_files),
             (
-                "play", "Play",
-                self.on_game_run
-            ),
-            (
-                "stop", "Stop",
-                self.on_stop
-            ),
-            (
-                "show_logs", "Show logs",
-                self.on_show_logs
-            ),
-            (
-                "install", "Install",
-                self.on_install_clicked
-            ),
-            (
-                "add", "Add installed game",
-                self.on_add_manually
-            ),
-            (
-                "configure", "Configure",
-                self.on_edit_game_configuration
-            ),
-            (
-                "execute-script", "Execute script",
-                self.on_execute_script_clicked
-            ),
-            (
-                "browse", "Browse files",
-                self.on_browse_files
-            ),
-            (
-                "desktop-shortcut", "Create desktop shortcut",
+                "desktop-shortcut",
+                _("Create desktop shortcut"),
                 self.on_create_desktop_shortcut,
             ),
             (
-                "rm-desktop-shortcut", "Delete desktop shortcut",
+                "rm-desktop-shortcut",
+                _("Delete desktop shortcut"),
                 self.on_remove_desktop_shortcut,
             ),
             (
-                "menu-shortcut", "Create application menu shortcut",
+                "menu-shortcut",
+                _("Create application menu shortcut"),
                 self.on_create_menu_shortcut,
             ),
             (
-                "rm-menu-shortcut", "Delete application menu shortcut",
+                "rm-menu-shortcut",
+                _("Delete application menu shortcut"),
                 self.on_remove_menu_shortcut,
             ),
-            (
-                "install_more", "Install another version",
-                self.on_install_clicked
-            ),
-            (
-                "remove", "Remove",
-                self.on_remove_game
-            ),
-            (
-                "view", "View on Lutris.net",
-                self.on_view_game
-            ),
+            ("install_more", _("Install another version"), self.on_install_clicked),
+            ("remove", _("Remove"), self.on_remove_game),
+            ("view", _("View on Lutris.net"), self.on_view_game),
+            ("hide", _("Hide game from library"), self.on_hide_game),
+            ("unhide", _("Unhide game from library"), self.on_unhide_game),
         ]
+
+    def on_hide_game(self, _widget):
+        """Add a game to the list of hidden games"""
+        game = Game(self.window.view.selected_game.id)
+
+        # Append the new hidden ID and save it
+        ignores = pga.get_hidden_ids() + [game.id]
+        pga.set_hidden_ids(ignores)
+
+        # Update the GUI
+        if not self.window.show_hidden_games:
+            self.window.game_store.remove_game(game.id)
+
+    def on_unhide_game(self, _widget):
+        """Removes a game from the list of hidden games"""
+        game = Game(self.window.view.selected_game.id)
+
+        # Remove the ID to unhide and save it
+        ignores = pga.get_hidden_ids()
+        ignores.remove(game.id)
+        pga.set_hidden_ids(ignores)
+
+    @staticmethod
+    def is_game_hidden(game):
+        """Returns whether a game is on the list of hidden games"""
+        return game.id in pga.get_hidden_ids()
 
     def get_displayed_entries(self):
         """Return a dictionary of actions that should be shown for a game"""
         return {
-            "add": not self.game.is_installed and not self.game.is_search_result,
-            "install": not self.game.is_installed,
-            "play": self.game.is_installed and not self.is_game_running,
-            "stop": self.is_game_running,
-            "show_logs": self.game.is_installed,
-            "configure": bool(self.game.is_installed),
-            "install_more": self.game.is_installed and not self.game.is_search_result,
-            "execute-script": bool(
-                self.game.is_installed
-                and self.game.runner.system_config.get("manual_command")
-            ),
-            "desktop-shortcut": (
-                self.game.is_installed
-                and not xdgshortcuts.desktop_launcher_exists(self.game.slug, self.game.id)
-            ),
-            "menu-shortcut": (
-                self.game.is_installed
-                and not xdgshortcuts.menu_launcher_exists(self.game.slug, self.game.id)
-            ),
-            "rm-desktop-shortcut": bool(
-                self.game.is_installed
-                and xdgshortcuts.desktop_launcher_exists(self.game.slug, self.game.id)
-            ),
-            "rm-menu-shortcut": bool(
-                self.game.is_installed
-                and xdgshortcuts.menu_launcher_exists(self.game.slug, self.game.id)
-            ),
-            "browse": self.game.is_installed and self.game.runner_name != "browser",
-            "remove": not self.game.is_search_result,
-            "view": True
+            "add":
+            not self.game.is_installed and not self.game.is_search_result,
+            "install":
+            not self.game.is_installed,
+            "play":
+            self.game.is_installed and not self.is_game_running,
+            "stop":
+            self.is_game_running,
+            "show_logs":
+            self.game.is_installed,
+            "configure":
+            bool(self.game.is_installed),
+            "install_more":
+            self.game.is_installed and not self.game.is_search_result,
+            "execute-script":
+            bool(self.game.is_installed and self.game.runner.system_config.get("manual_command")),
+            "desktop-shortcut":
+            (self.game.is_installed and not xdgshortcuts.desktop_launcher_exists(self.game.slug, self.game.id)),
+            "menu-shortcut":
+            (self.game.is_installed and not xdgshortcuts.menu_launcher_exists(self.game.slug, self.game.id)),
+            "rm-desktop-shortcut":
+            bool(self.game.is_installed and xdgshortcuts.desktop_launcher_exists(self.game.slug, self.game.id)),
+            "rm-menu-shortcut":
+            bool(self.game.is_installed and xdgshortcuts.menu_launcher_exists(self.game.slug, self.game.id)),
+            "browse":
+            self.game.is_installed and self.game.runner_name != "browser",
+            "remove":
+            not self.game.is_search_result,
+            "view":
+            True,
+            "hide":
+            not GameActions.is_game_hidden(self.game),
+            "unhide":
+            GameActions.is_game_hidden(self.game)
         }
 
     def on_game_run(self, *_args):
@@ -154,15 +168,20 @@ class GameActions:
             game = self.application.running_games.get_item(i)
             if game == self.game:
                 return game
+        return None
 
-    def on_stop(self, caller):
+    def on_stop(self, caller):  # pylint: disable=unused-argument
         """Stops the game"""
 
         matched_game = self.get_running_game()
         if not matched_game:
-            logger.warning("%s not in running game list", self.game_id)
+            logger.warning(
+                "Game %s not in the %s running games", self.game_id, self.application.running_games.get_n_items()
+            )
             return
-
+        if not matched_game.game_thread:
+            logger.warning("Game %s doesn't appear to be running, not killing it", self.game_id)
+            return
         try:
             os.kill(matched_game.game_thread.game_process.pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -172,19 +191,13 @@ class GameActions:
     def on_show_logs(self, _widget):
         """Display game log"""
         return LogWindow(
-            title="Log for {}".format(self.game),
-            buffer=self.game.log_buffer,
-            application=self.application
+            title=_("Log for {}").format(self.game), buffer=self.game.log_buffer, application=self.application
         )
 
     def on_install_clicked(self, *_args):
         """Install a game"""
         # Install the currently selected game in the UI
-        return InstallerWindow(
-            parent=self.window,
-            game_slug=self.game.slug,
-            application=self.application,
-        )
+        self.application.show_window(InstallerWindow, parent=self.window, game_slug=self.game.slug)
 
     def on_add_manually(self, _widget, *_args):
         """Callback that presents the Add game dialog"""
@@ -209,11 +222,11 @@ class GameActions:
         """Callback to open a game folder in the file browser"""
         path = self.game.get_browse_dir()
         if not path:
-            dialogs.NoticeDialog("This game has no installation directory")
+            dialogs.NoticeDialog(_("This game has no installation directory"))
         elif path_exists(path):
             open_uri("file://%s" % path)
         else:
-            dialogs.NoticeDialog("Can't open %s \nThe folder doesn't exist." % path)
+            dialogs.NoticeDialog(_("Can't open %s \nThe folder doesn't exist.") % path)
 
     def on_create_menu_shortcut(self, *_args):
         """Add the selected game to the system's Games menu."""
@@ -237,6 +250,4 @@ class GameActions:
 
     def on_remove_game(self, *_args):
         """Callback that present the uninstall dialog to the user"""
-        UninstallGameDialog(
-            game_id=self.game.id, callback=self.window.remove_game_from_view, parent=self.window
-        )
+        UninstallGameDialog(game_id=self.game.id, callback=self.window.remove_game_from_view, parent=self.window)

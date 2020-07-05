@@ -1,39 +1,61 @@
 """Threading module, used to launch games while monitoring them."""
 
+# Standard Library
+import contextlib
+import fcntl
 import io
 import os
-import sys
-import fcntl
 import shlex
 import subprocess
-import contextlib
+import sys
 from textwrap import dedent
 
+# Third Party Libraries
 from gi.repository import GLib
 
-from lutris import settings
-from lutris import runtime
-from lutris.util.log import logger
+# Lutris Modules
+from lutris import runtime, settings
 from lutris.util import system
-from lutris.util.signals import PID_HANDLERS, register_handler
+from lutris.util.log import logger
 
-WRAPPER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "lutris-wrapper")
+
+def get_wrapper_script_location():
+    """Return absolute path of lutris-wrapper script"""
+    wrapper_relpath = "share/lutris/bin/lutris-wrapper"
+    candidates = [
+        os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "..")),
+        os.path.dirname(os.path.dirname(settings.__file__)),
+        "/usr",
+        "/usr/local",
+    ]
+    for candidate in candidates:
+        wrapper_abspath = os.path.join(candidate, wrapper_relpath)
+        if os.path.isfile(wrapper_abspath):
+            return wrapper_abspath
+    raise FileNotFoundError("Couldn't find lutris-wrapper script in any of the expected locations")
+
+
+WRAPPER_SCRIPT = get_wrapper_script_location()
 
 
 class MonitoredCommand:
+
     """Exexcutes a commmand while keeping track of its state"""
 
+    fallback_cwd = "/tmp"
+
     def __init__(
-            self,
-            command,
-            runner=None,
-            env=None,
-            term=None,
-            cwd=None,
-            include_processes=None,
-            exclude_processes=None,
-            log_buffer=None,
-    ):
+        self,
+        command,
+        runner=None,
+        env=None,
+        term=None,
+        cwd=None,
+        include_processes=None,
+        exclude_processes=None,
+        log_buffer=None,
+        title=None,
+    ):  # pylint: disable=too-many-arguments
         self.ready_state = True
         self.env = self.get_environment(env)
 
@@ -41,6 +63,7 @@ class MonitoredCommand:
         self.runner = runner
         self.stop_func = lambda: True
         self.game_process = None
+        self.prevent_on_stop = False
         self.return_code = None
         self.terminal = system.find_executable(term)
         self.is_running = True
@@ -54,10 +77,11 @@ class MonitoredCommand:
         self.include_processes = include_processes or []
         self.exclude_processes = exclude_processes or []
 
-        # Keep a copy of previously running processes
         self.cwd = self.get_cwd(cwd)
 
         self._stdout = io.StringIO()
+
+        self._title = title if title else command[0]
 
     @property
     def stdout(self):
@@ -69,6 +93,7 @@ class MonitoredCommand:
 
         return [
             WRAPPER_SCRIPT,
+            self._title,
             str(len(self.include_processes)),
             str(len(self.exclude_processes)),
         ] + self.include_processes + self.exclude_processes + self.command
@@ -84,8 +109,8 @@ class MonitoredCommand:
     def get_cwd(self, cwd):
         """Return the current working dir of the game"""
         if not cwd:
-            cwd = self.runner.working_dir if self.runner else "/tmp"
-        return os.path.expanduser(cwd)
+            cwd = self.runner.working_dir if self.runner else None
+        return os.path.expanduser(cwd or "~")
 
     @staticmethod
     def get_environment(user_env):
@@ -96,9 +121,7 @@ class MonitoredCommand:
         env['PYTHONPATH'] = ':'.join(sys.path)
         # Drop bad values of environment keys, those will confuse the Python
         # interpreter.
-        return {
-            key: value for key, value in env.items() if "=" not in key
-        }
+        return {key: value for key, value in env.items() if "=" not in key}
 
     def get_child_environment(self):
         """Returns the calculated environment for the child process."""
@@ -108,10 +131,9 @@ class MonitoredCommand:
 
     def start(self):
         """Run the thread."""
-        logger.debug("Running %s", " ".join(self.wrapper_command))
         for key, value in self.env.items():
-            logger.debug("ENV: %s=\"%s\"", key, value)
-            pass
+            logger.debug("%s=\"%s\"", key, value)
+        logger.debug(" ".join(self.wrapper_command))
 
         if self.terminal:
             self.game_process = self.run_in_terminal()
@@ -120,18 +142,14 @@ class MonitoredCommand:
             self.game_process = self.execute_process(self.wrapper_command, env)
 
         if not self.game_process:
-            logger.warning("No game process available")
+            logger.error("No game process available")
             return
 
-        register_handler(self.game_process.pid, self.on_stop)
+        GLib.child_watch_add(self.game_process.pid, self.on_stop)
 
         # make stdout nonblocking.
         fileno = self.game_process.stdout.fileno()
-        fcntl.fcntl(
-            fileno,
-            fcntl.F_SETFL,
-            fcntl.fcntl(fileno, fcntl.F_GETFL) | os.O_NONBLOCK
-        )
+        fcntl.fcntl(fileno, fcntl.F_SETFL, fcntl.fcntl(fileno, fcntl.F_GETFL) | os.O_NONBLOCK)
 
         self.stdout_monitor = GLib.io_add_watch(
             self.game_process.stdout,
@@ -153,8 +171,11 @@ class MonitoredCommand:
             sys.stdout.write(line)
             sys.stdout.flush()
 
-    def on_stop(self, returncode):
-        """Callback registered on the SIGCHLD handler"""
+    def on_stop(self, _pid, returncode):
+        """Callback registered on game process termination"""
+        if self.prevent_on_stop:  # stop() already in progress
+            return False
+
         logger.debug("The process has terminated with code %s", returncode)
         self.is_running = False
         self.return_code = returncode
@@ -193,31 +214,33 @@ class MonitoredCommand:
         game is quit.
         """
         script_path = os.path.join(settings.CACHE_DIR, "run_in_term.sh")
-        exported_environment = "\n".join(
-            'export %s="%s" ' % (key, value)
-            for key, value in self.env.items()
-        )
+        exported_environment = "\n".join('export %s="%s" ' % (key, value) for key, value in self.env.items())
         command = " ".join(['"%s"' % token for token in self.wrapper_command])
         with open(script_path, "w") as script_file:
-            script_file.write(dedent(
-                """#!/bin/sh
+            script_file.write(
+                dedent(
+                    """#!/bin/sh
                 cd "%s"
                 %s
                 exec %s
                 """ % (self.cwd, exported_environment, command)
-            ))
+                )
+            )
             os.chmod(script_path, 0o744)
         return self.execute_process([self.terminal, "-e", script_path])
 
     def execute_process(self, command, env=None):
         """Execute and return a subprocess"""
-        try:
-            if self.cwd and not system.path_exists(self.cwd):
+        if self.cwd and not system.path_exists(self.cwd):
+            try:
                 os.makedirs(self.cwd)
+            except OSError:
+                logger.error("Failed to create working directory, falling back to %s", self.fallback_cwd)
+                self.cwd = "/tmp"
+        try:
 
             return subprocess.Popen(
                 command,
-                bufsize=1,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=self.cwd,
@@ -229,11 +252,8 @@ class MonitoredCommand:
 
     def stop(self):
         """Stops the current game process and cleans up the instance"""
-        try:
-            PID_HANDLERS.pop(self.game_process.pid)
-        except KeyError:
-            # This game has no stop handler
-            pass
+        # Prevent stop() being called again by the process exiting
+        self.prevent_on_stop = True
 
         try:
             self.game_process.terminate()
@@ -246,11 +266,8 @@ class MonitoredCommand:
                 return False
 
         if self.stdout_monitor:
-            logger.debug("Detaching logger")
             GLib.source_remove(self.stdout_monitor)
             self.stdout_monitor = None
-        else:
-            logger.debug("logger already detached")
 
         self.is_running = False
         self.ready_state = False

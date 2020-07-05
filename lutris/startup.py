@@ -1,15 +1,15 @@
 """Check to run at program start"""
 # pylint: disable=no-member
 import os
-from lutris.util.log import logger
-from lutris import pga
+from gettext import gettext as _
+
+from lutris import pga, settings
 from lutris.game import Game
-from lutris import settings
-from lutris.util.system import create_folder
-from lutris.util.graphics import drivers
-from lutris.util.graphics import vkquery
-from lutris.util.linux import LINUX_SYSTEM
 from lutris.gui.dialogs import DontShowAgainDialog
+from lutris.util.graphics import drivers, vkquery
+from lutris.util.linux import LINUX_SYSTEM
+from lutris.util.log import logger
+from lutris.util.system import create_folder
 
 
 def init_dirs():
@@ -70,11 +70,7 @@ def check_driver():
     for card in drivers.get_gpus():
         # pylint: disable=logging-format-interpolation
         try:
-            logger.info(
-                "GPU: {PCI_ID} {PCI_SUBSYS_ID} using {DRIVER} drivers".format(
-                    **drivers.get_gpu_info(card)
-                )
-            )
+            logger.info("GPU: {PCI_ID} {PCI_SUBSYS_ID} using {DRIVER} drivers".format(**drivers.get_gpu_info(card)))
         except KeyError:
             logger.error("Unable to get GPU information from '%s'", card)
 
@@ -83,13 +79,12 @@ def check_driver():
         if settings.read_setting(setting) != "True":
             DontShowAgainDialog(
                 setting,
-                "Your Nvidia driver is outdated.",
-                secondary_message="You are currently running driver %s which does not "
-                "fully support all features for Vulkan and DXVK games.\n"
-                "Please upgrade your driver as described in our "
-                "<a href='https://github.com/lutris/lutris/wiki/Installing-drivers'>"
-                "installation guide</a>"
-                % driver_info["nvrm"]["version"]
+                _("Your Nvidia driver is outdated."),
+                secondary_message=_("You are currently running driver %s which does not "
+                                    "fully support all features for Vulkan and DXVK games.\n"
+                                    "Please upgrade your driver as described in our "
+                                    "<a href='https://github.com/lutris/lutris/wiki/Installing-drivers'>"
+                                    "installation guide</a>") % driver_info["nvrm"]["version"],
             )
 
 
@@ -113,13 +108,13 @@ def check_libs(all_components=False):
         if settings.read_setting(setting) != "True":
             DontShowAgainDialog(
                 setting,
-                "Missing vulkan libraries",
-                secondary_message="The Vulkan library for %s has not been found. "
-                "This will prevent games using Vulkan (such as DXVK games) from running. "
-                "To install it, please follow "
-                "<a href='https://github.com/lutris/lutris/wiki/Installing-drivers'>"
-                "the instructions on our Wiki</a>"
-                % " and ".join(missing_vulkan_libs)
+                _("Missing vulkan libraries"),
+                secondary_message=_("Lutris was unable to detect Vulkan support for "
+                                    "the %s architecture.\n"
+                                    "This will prevent many games and programs from working.\n"
+                                    "To install it, please use the following guide: "
+                                    "<a href='https://github.com/lutris/lutris/wiki/Installing-drivers'>"
+                                    "Installing Graphics Drivers</a>") % _(" and ").join(missing_vulkan_libs),
             )
 
 
@@ -131,22 +126,6 @@ def check_vulkan():
         logger.info("Vulkan is not available or your system isn't Vulkan capable")
 
 
-def check_donate():
-    setting = "dont-support-lutris"
-    if settings.read_setting(setting) != "True":
-        DontShowAgainDialog(
-            setting,
-            "Please support Lutris!",
-            secondary_message="Lutris is entirely funded by its community and will "
-            "remain an independent gaming platform.\n"
-            "For Lutris to survive and grow, the project needs your help.\n"
-            "Please consider making a donation if you can. This will greatly help "
-            "cover the costs of hosting the project and fund new features "
-            "like cloud saves or a full-screen interface for the TV!\n"
-            "<a href='https://lutris.net/donate'>SUPPORT US! https://lutris.net/donate</a>"
-        )
-
-
 def fill_missing_platforms():
     """Sets the platform on games where it's missing.
     This should never happen.
@@ -156,9 +135,9 @@ def fill_missing_platforms():
         if pga_game.get("platform") or not pga_game["runner"]:
             continue
         game = Game(game_id=pga_game["id"])
-        logger.error("Providing missing platorm for game %s", game.slug)
         game.set_platform_from_runner()
         if game.platform:
+            logger.info("Platform for %s set to %s", game.name, game.platform)
             game.save(metadata_only=True)
 
 
@@ -167,5 +146,4 @@ def run_all_checks():
     check_driver()
     check_libs()
     check_vulkan()
-    check_donate()
     fill_missing_platforms()

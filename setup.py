@@ -18,7 +18,6 @@ for directory, _, filenames in os.walk(u'share'):
             files.append(filename)
         data_files.append((os.path.join('share', dest), files))
 
-
 setup(
     name='lutris',
     version=VERSION,
@@ -39,11 +38,12 @@ setup(
         'lutris.services',
         'lutris.util',
         'lutris.util.graphics',
+        'lutris.util.mame',
         'lutris.util.steam',
         'lutris.util.wine',
         'lutris.vendor'
     ],
-    scripts=['bin/lutris', 'bin/lutris-wrapper'],
+    scripts=['bin/lutris'],
     data_files=data_files,
     zip_safe=False,
     install_requires=[
@@ -52,9 +52,12 @@ setup(
         'evdev',
         'requests'
     ],
+    extras_require={
+        'Discord': ['pypresence~=3.3.2']
+    },
     url='https://lutris.net',
     description='Install and play any video game on Linux',
-    long_description="""Lutris is a gaming platform for GNU/Linux. It's goal is
+    long_description="""Lutris is a gaming platform for GNU/Linux. Its goal is
     to make gaming on Linux as easy as possible by taking care of installing
     and setting up the game for the user. The only thing you have to do is play
     the game. It aims to support every game that is playable on Linux.""",

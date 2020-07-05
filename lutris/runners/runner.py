@@ -1,24 +1,37 @@
 """Base module for runners"""
+# Standard Library
 import os
+from gettext import gettext as _
 
+# Third Party Libraries
 from gi.repository import Gtk
 
-from lutris import pga, settings, runtime
+# Lutris Modules
+from lutris import pga, runtime, settings
+from lutris.command import MonitoredCommand
 from lutris.config import LutrisConfig
 from lutris.gui import dialogs
-from lutris.command import MonitoredCommand
-from lutris.util.extract import extract_archive, ExtractFailure
-from lutris.util.log import logger
-from lutris.util import system
-from lutris.util.http import Request
 from lutris.runners import RunnerInstallationError
+from lutris.util import system
+from lutris.util.extract import ExtractFailure, extract_archive
+from lutris.util.http import Request
+from lutris.util.log import logger
 
 
-class Runner:
+class RunnerMeta(type):
+    def __new__(mcs, name, bases, body):
+        if name != 'Runner' and 'play' not in body:
+            raise TypeError("The play method is not implemented in runner %s!" % name)
+        return super().__new__(mcs, name, bases, body)
+
+
+class Runner(metaclass=RunnerMeta):  # pylint: disable=too-many-public-methods
+
     """Generic runner (base class for other runners)."""
 
     multiple_versions = False
     platforms = []
+    require_libs = []
     runnable_alone = False
     game_options = []
     runner_options = []
@@ -26,6 +39,7 @@ class Runner:
     context_menu_entries = []
     depends_on = None
     runner_executable = None
+    entry_point_option = "main_file"
 
     def __init__(self, config=None):
         """Initialize runner."""
@@ -33,9 +47,7 @@ class Runner:
         self.config = config
         self.game_data = {}
         if config:
-            self.game_data = pga.get_game_by_field(
-                self.config.game_config_id, "configpath"
-            )
+            self.game_data = pga.get_game_by_field(self.config.game_config_id, "configpath")
 
     def __lt__(self, other):
         return self.name < other.name
@@ -83,28 +95,47 @@ class Runner:
         return self.system_config.get("game_path")
 
     @property
-    def browse_dir(self):
-        """Return the path to open with the Browse Files action."""
-        for key in self.game_config:
-            if key in ["exe", "main_file", "rom", "disk", "iso"]:
-                path = os.path.dirname(self.game_config.get(key) or "")
-                if not os.path.isabs(path):
-                    path = os.path.join(self.game_path, path)
-                return path
-
-        if self.game_data.get("directory"):
-            return self.game_data.get("directory")
-
-    @property
     def game_path(self):
         """Return the directory where the game is installed."""
-        if self.game_data.get("directory"):
-            return self.game_data.get("directory")
+        game_path = self.game_data.get("directory")
+        if game_path:
+            return game_path
+
+        # Default to the directory where the entry point is located.
+        entry_point = self.game_config.get(self.entry_point_option)
+        if entry_point:
+            return os.path.dirname(os.path.expanduser(entry_point))
+        return ""
 
     @property
     def working_dir(self):
         """Return the working directory to use when running the game."""
         return self.game_path or os.path.expanduser("~/")
+
+    @property
+    def discord_rpc_enabled(self):
+        if self.game_data.get("discord_rpc_enabled"):
+            return self.game_data.get("discord_rpc_enabled")
+
+    @property
+    def discord_show_runner(self):
+        if self.game_data.get("discord_show_runner"):
+            return self.game_data.get("discord_show_runner")
+
+    @property
+    def discord_custom_game_name(self):
+        if self.game_data.get("discord_custom_game_name"):
+            return self.game_data.get("discord_custom_game_name")
+
+    @property
+    def discord_custom_runner_name(self):
+        if self.game_data.get("discord_custom_runner_name"):
+            return self.game_data.get("discord_custom_runner_name")
+
+    @property
+    def discord_client_id(self):
+        if self.game_data.get("discord_client_id"):
+            return self.game_data.get("discord_client_id")
 
     def get_platform(self):
         return self.platforms[0]
@@ -116,7 +147,7 @@ class Runner:
                 {
                     "option": "runner_executable",
                     "type": "file",
-                    "label": "Custom executable for the runner",
+                    "label": _("Custom executable for the runner"),
                     "advanced": True,
                 }
             )
@@ -156,9 +187,7 @@ class Runner:
             ld_library_path = env.get("LD_LIBRARY_PATH")
             if not ld_library_path:
                 ld_library_path = "$LD_LIBRARY_PATH"
-            env["LD_LIBRARY_PATH"] = ":".join(
-                [runtime_ld_library_path, ld_library_path]
-            )
+            env["LD_LIBRARY_PATH"] = ":".join([runtime_ld_library_path, ld_library_path])
 
         return env
 
@@ -172,22 +201,17 @@ class Runner:
             dict
 
         """
-        return runtime.get_env(
-            prefer_system_libs=self.system_config.get("prefer_system_libs", True)
-        )
+        return runtime.get_env(prefer_system_libs=self.system_config.get("prefer_system_libs", True))
 
-    def play(self):
-        """Dummy method, must be implemented by derived runners."""
-        raise NotImplementedError("Implement the play method in your runner")
+    def prelaunch(self):
+        """Run actions before running the game, override this method in runners"""
+        return True
 
     def get_run_data(self):
         """Return dict with command (exe & args list) and env vars (dict).
 
         Reimplement in derived runner if need be."""
-        return {
-            "command": [self.get_executable()],
-            "env": self.get_env()
-        }
+        return {"command": [self.get_executable()], "env": self.get_env()}
 
     def run(self, *args):
         """Run the runner alone."""
@@ -224,21 +248,23 @@ class Runner:
         """
         dialog = dialogs.QuestionDialog(
             {
-                "question": (
-                    "The required runner is not installed.\n"
-                    "Do you wish to install it now?"
-                ),
-                "title": "Required runner unavailable",
+                "question": _("The required runner is not installed.\n"
+                              "Do you wish to install it now?"),
+                "title": _("Required runner unavailable"),
             }
         )
         if Gtk.ResponseType.YES == dialog.result:
 
             from lutris.gui.dialogs.runners import simple_downloader
-            if hasattr(self, "get_version"):
-                self.install(downloader=simple_downloader,
-                             version=self.get_version(use_default=False))
-            else:
-                self.install(downloader=simple_downloader)
+            from lutris.gui.dialogs import ErrorDialog
+            try:
+                if hasattr(self, "get_version"):
+                    self.install(downloader=simple_downloader, version=self.get_version(use_default=False))
+                else:
+                    self.install(downloader=simple_downloader)
+            except RunnerInstallationError as ex:
+                ErrorDialog(ex.message)
+
             return self.is_installed()
         return False
 
@@ -246,17 +272,22 @@ class Runner:
         """Return whether the runner is installed"""
         return system.path_exists(self.get_executable())
 
-    def get_runner_info(self):
-        request = Request("{}/api/runners/{}".format(settings.SITE_URL, self.name))
-        return request.get().json
-
     def get_runner_version(self, version=None):
+        """Get the appropriate version for a runner
+
+        Params:
+            version (str): Optional version to lookup, will return this one if found
+
+        Returns:
+            dict: Dict containing version, architecture and url for the runner
+        """
         logger.info(
             "Getting runner information for %s%s",
             self.name,
-            "(version: %s)" % version if version else "",
+            " (version: %s)" % version if version else "",
         )
-        runner_info = self.get_runner_info()
+        request = Request("{}/api/runners/{}".format(settings.SITE_URL, self.name))
+        runner_info = request.get().json
         if not runner_info:
             logger.error("Failed to get runner information")
             return
@@ -296,23 +327,14 @@ class Runner:
         )
         runner = self.get_runner_version(version)
         if not runner:
-            raise RunnerInstallationError(
-                "{} is not available for the {} architecture".format(
-                    self.name, self.arch
-                )
-            )
+            raise RunnerInstallationError("Failed to retrieve {} ({}) information".format(self.name, version))
         if not downloader:
             raise RuntimeError("Missing mandatory downloader for runner %s" % self)
-        opts = {
-            "downloader": downloader,
-            "callback": callback
-        }
+        opts = {"downloader": downloader, "callback": callback}
         if "wine" in self.name:
             opts["merge_single"] = True
             opts["dest"] = os.path.join(
-                settings.RUNNER_DIR,
-                self.name,
-                "{}-{}".format(runner["version"], runner["architecture"])
+                settings.RUNNER_DIR, self.name, "{}-{}".format(runner["version"], runner["architecture"])
             )
 
         if self.name == "libretro" and version:
@@ -328,12 +350,14 @@ class Runner:
         runner_archive = os.path.join(settings.CACHE_DIR, tarball_filename)
         if not dest:
             dest = settings.RUNNER_DIR
-        downloader(url, runner_archive, self.extract, {
-            "archive": runner_archive,
-            "dest": dest,
-            "merge_single": merge_single,
-            "callback": callback,
-        })
+        downloader(
+            url, runner_archive, self.extract, {
+                "archive": runner_archive,
+                "dest": dest,
+                "merge_single": merge_single,
+                "callback": callback,
+            }
+        )
 
     def extract(self, archive=None, dest=None, merge_single=None, callback=None):
         if not system.path_exists(archive):
@@ -365,3 +389,14 @@ class Runner:
         runner_path = os.path.join(settings.RUNNER_DIR, self.name)
         if os.path.isdir(runner_path):
             system.remove_folder(runner_path)
+
+    def find_option(self, options_group, option_name):
+        """Retrieve an option dict if it exists in the group"""
+        if options_group not in ['game_options', 'runner_options']:
+            return None
+        output = None
+        for item in getattr(self, options_group):
+            if item["option"] == option_name:
+                output = item
+                break
+        return output

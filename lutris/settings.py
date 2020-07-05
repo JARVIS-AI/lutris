@@ -1,15 +1,19 @@
 """Internal settings."""
+# Standard Library
 import os
-from gi.repository import GLib
-from lutris.util.settings import SettingsIO
-from lutris import __version__
+from gettext import gettext as _
 
-PROJECT = "Lutris"
+# Third Party Libraries
+from gi.repository import GLib
+
+# Lutris Modules
+from lutris import __version__
+from lutris.util.settings import SettingsIO
+
+PROJECT = _("Lutris")
 VERSION = __version__
-COPYRIGHT = "(c) 2010-2019 Lutris Gaming Platform"
-AUTHORS = [
-    "The Lutris team"
-]
+COPYRIGHT = _("(c) 2010-2020 Lutris Gaming Platform")
+AUTHORS = [_("The Lutris team")]
 
 # Paths
 CONFIG_DIR = os.path.join(GLib.get_user_config_dir(), "lutris")
@@ -36,6 +40,8 @@ GAME_URL = SITE_URL + "/games/%s/"
 ICON_URL = SITE_URL + "/games/icon/%s.png"
 BANNER_URL = SITE_URL + "/games/banner/%s.jpg"
 RUNTIME_URL = "https://lutris.net/api/runtime"
+
+DEFAULT_DISCORD_CLIENT_ID = "618290412402114570"
 
 read_setting = sio.read_setting
 write_setting = sio.write_setting

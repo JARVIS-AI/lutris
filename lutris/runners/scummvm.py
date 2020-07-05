@@ -1,40 +1,62 @@
+# Standard Library
 import os
 import subprocess
+from gettext import gettext as _
 
+# Lutris Modules
 from lutris import settings
 from lutris.runners.runner import Runner
 from lutris.util import system
+from lutris.util.strings import split_arguments
 
 
 class scummvm(Runner):
-    description = "Runs various 2D point-and-click adventure games."
-    human_name = "ScummVM"
-    platforms = ["Linux"]
+    description = _("Runs various 2D point-and-click adventure games.")
+    human_name = _("ScummVM")
+    platforms = [_("Linux")]
     runnable_alone = True
     runner_executable = "scummvm/bin/scummvm"
     game_options = [
-        {"option": "game_id", "type": "string", "label": "Game identifier"},
-        {"option": "path", "type": "directory_chooser", "label": "Game files location"},
+        {
+            "option": "game_id",
+            "type": "string",
+            "label": _("Game identifier")
+        },
+        {
+            "option": "path",
+            "type": "directory_chooser",
+            "label": _("Game files location")
+        },
         {
             "option": "subtitles",
-            "label": "Enable subtitles (if the game has voice)",
+            "label": _("Enable subtitles (if the game has voice)"),
             "type": "bool",
             "default": False,
+        },
+        {
+            "option": "args",
+            "type": "string",
+            "label": _("Arguments"),
+            "help": _("Command line arguments used when launching the game"),
         },
     ]
     runner_options = [
         {
             "option": "fullscreen",
-            "label": "Fullscreen mode",
+            "label": _("Fullscreen mode"),
             "type": "bool",
             "default": False,
         },
         {
-            "option": "aspect",
-            "label": "Aspect ratio correction",
-            "type": "bool",
-            "default": True,
-            "help": (
+            "option":
+            "aspect",
+            "label":
+            _("Aspect ratio correction"),
+            "type":
+            "bool",
+            "default":
+            True,
+            "help": _(
                 "Most games supported by ScummVM were made for VGA "
                 "display modes using rectangular pixels. Activating "
                 "this option for these games will preserve the 4:3 "
@@ -42,12 +64,16 @@ class scummvm(Runner):
             ),
         },
         {
-            "option": "gfx-mode",
-            "label": "Graphic scaler",
-            "type": "choice",
-            "default": "3x",
+            "option":
+            "gfx-mode",
+            "label":
+            _("Graphic scaler"),
+            "type":
+            "choice",
+            "default":
+            "3x",
             "choices": [
-                ("normal", "normal"),
+                (_("normal"), "normal"),
                 ("2x", "2x"),
                 ("3x", "3x"),
                 ("hq2x", "hq2x"),
@@ -60,10 +86,16 @@ class scummvm(Runner):
                 ("tv2x", "tv2x"),
                 ("dotmatrix", "dotmatrix"),
             ],
-            "help": (
-                "The algorithm used to scale up the game's base "
-                "resolution, resulting in different visual styles. "
-            ),
+            "help":
+            _("The algorithm used to scale up the game's base "
+              "resolution, resulting in different visual styles. "),
+        },
+        {
+            "option": "datadir",
+            "label": _("Data directory"),
+            "type": "directory_chooser",
+            "help": _("Defaults to share/scummvm if unspecified."),
+            "advanced": True,
         },
     ]
 
@@ -84,8 +116,13 @@ class scummvm(Runner):
         ]
 
     def get_scummvm_data_dir(self):
-        root_dir = os.path.dirname(os.path.dirname(self.get_executable()))
-        return os.path.join(root_dir, "share/scummvm")
+        data_dir = self.runner_config.get("datadir")
+
+        if data_dir is None:
+            root_dir = os.path.dirname(os.path.dirname(self.get_executable()))
+            data_dir = os.path.join(root_dir, "share/scummvm")
+
+        return data_dir
 
     def get_run_data(self):
         env = {"LD_LIBRARY_PATH": "%s;$LD_LIBRARY_PATH" % self.libs_dir}
@@ -110,19 +147,19 @@ class scummvm(Runner):
         if mode:
             command.append("--gfx-mode=%s" % mode)
         # /Options
-
         command.append("--path=%s" % self.game_path)
+        args = self.game_config.get("args") or ""
+        for arg in split_arguments(args):
+            command.append(arg)
         command.append(self.game_config.get("game_id"))
-
         launch_info = {"command": command, "ld_library_path": self.libs_dir}
 
         return launch_info
 
     def get_game_list(self):
         """Return the entire list of games supported by ScummVM."""
-        scumm_output = subprocess.Popen(
-            [self.get_executable(), "--list-games"], stdout=subprocess.PIPE
-        ).communicate()[0]
+        scumm_output = subprocess.Popen([self.get_executable(), "--list-games"],
+                                        stdout=subprocess.PIPE).communicate()[0]
         game_list = str.split(scumm_output, "\n")
         game_array = []
         game_list_start = False

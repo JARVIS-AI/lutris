@@ -1,15 +1,19 @@
 """Utilities for manipulating Wine"""
+# Standard Library
 import os
 import subprocess
-from functools import lru_cache
 from collections import OrderedDict
+from functools import lru_cache
+from gettext import gettext as _
 
+# Lutris Modules
 from lutris import runtime, settings
 from lutris.gui.dialogs import DontShowAgainDialog, ErrorDialog
+from lutris.runners.steam import steam
 from lutris.util import system
 from lutris.util.log import logger
-from lutris.util.strings import version_sort
-from lutris.runners.steam import steam
+from lutris.util.strings import parse_version, version_sort
+from lutris.util.wine import fsync
 
 WINE_DIR = os.path.join(settings.RUNNER_DIR, "wine")
 WINE_DEFAULT_ARCH = "win64" if system.LINUX_SYSTEM.is_64_bit else "win32"
@@ -21,6 +25,7 @@ WINE_PATHS = {
 }
 
 ESYNC_LIMIT_CHECK = os.environ.get("ESYNC_LIMIT_CHECK", "").lower()
+FSYNC_SUPPORT_CHECK = os.environ.get("FSYNC_SUPPORT_CHECK", "").lower()
 
 
 def get_playonlinux():
@@ -123,9 +128,10 @@ def is_installed_systemwide():
     """Return whether Wine is installed outside of Lutris"""
     for build in WINE_PATHS.values():
         if system.find_executable(build):
+            # if wine64 is installed but not wine32, don't consider it
+            # a system-wide installation.
             if (
-                build == "wine"
-                and system.path_exists("/usr/lib/wine/wine64")
+                build == "wine" and system.path_exists("/usr/lib/wine/wine64")
                 and not system.path_exists("/usr/lib/wine/wine")
             ):
                 logger.warning("wine32 is missing from system")
@@ -134,40 +140,62 @@ def is_installed_systemwide():
     return False
 
 
-@lru_cache(maxsize=8)
-def get_wine_versions():
-    """Return the list of Wine versions installed"""
+def get_system_wine_versions():
+    """Return the list of wine versions installed on the system"""
     versions = []
-
     for build in sorted(WINE_PATHS.keys()):
         version = get_system_wine_version(WINE_PATHS[build])
         if version:
             versions.append(build)
+    return versions
 
+
+def get_lutris_wine_versions():
+    """Return the list of wine versions installed by lutris"""
+    versions = []
     if system.path_exists(WINE_DIR):
         dirs = version_sort(os.listdir(WINE_DIR), reverse=True)
         for dirname in dirs:
             if is_version_installed(dirname):
                 versions.append(dirname)
+    return versions
 
+
+def get_proton_versions():
+    """Return the list of Proton versions installed in Steam"""
+    versions = []
     for proton_path in get_proton_paths():
         proton_versions = [p for p in os.listdir(proton_path) if "Proton" in p]
         for version in proton_versions:
             path = os.path.join(proton_path, version, "dist/bin/wine")
             if os.path.isfile(path):
                 versions.append(version)
+    return versions
 
-    if POL_PATH:
-        for arch in ['x86', 'amd64']:
-            builds_path = os.path.join(POL_PATH, "wine/linux-%s" % arch)
-            if not system.path_exists(builds_path):
-                continue
-            for version in os.listdir(builds_path):
-                if system.path_exists(os.path.join(builds_path, version, "bin/wine")):
-                    logger.debug("Adding PoL version %s", version)
-                    versions.append("PlayOnLinux %s-%s" % (version, arch))
-                else:
-                    logger.warning(os.path.join(builds_path, "bin/wine"))
+
+def get_pol_wine_versions():
+    """Return the list of wine versions installed by Play on Linux"""
+    if not POL_PATH:
+        return []
+    versions = []
+    for arch in ['x86', 'amd64']:
+        builds_path = os.path.join(POL_PATH, "wine/linux-%s" % arch)
+        if not system.path_exists(builds_path):
+            continue
+        for version in os.listdir(builds_path):
+            if system.path_exists(os.path.join(builds_path, version, "bin/wine")):
+                versions.append("PlayOnLinux %s-%s" % (version, arch))
+    return versions
+
+
+@lru_cache(maxsize=8)
+def get_wine_versions():
+    """Return the list of Wine versions installed"""
+    versions = []
+    versions += get_system_wine_versions()
+    versions += get_lutris_wine_versions()
+    versions += get_proton_versions()
+    versions += get_pol_wine_versions()
     return versions
 
 
@@ -191,6 +219,14 @@ def is_esync_limit_set():
     return system.LINUX_SYSTEM.has_enough_file_descriptors()
 
 
+def is_fsync_supported():
+    """Checks if the running kernel has Valve's futex patch applied."""
+    if FSYNC_SUPPORT_CHECK in ("0", "off"):
+        logger.info("futex patch check for fsync was manually disabled")
+        return True
+    return fsync.is_fsync_supported()
+
+
 def get_default_version():
     """Return the default version of wine. Prioritize 64bit builds"""
     installed_versions = get_wine_versions()
@@ -199,6 +235,7 @@ def get_default_version():
         return wine64_versions[0]
     if installed_versions:
         return installed_versions[0]
+    return
 
 
 def get_system_wine_version(wine_path="wine"):
@@ -221,6 +258,7 @@ def get_system_wine_version(wine_path="wine"):
         if version.startswith("wine-"):
             version = version[5:]
         return version
+    return
 
 
 def is_version_esync(path):
@@ -232,12 +270,53 @@ def is_version_esync(path):
     Returns:
         bool: True is the build is Esync capable
     """
-    version = path.lower()
-    if "esync" in version or "tkg" in version or "proton" in version:
-        return True
+    try:
+        version = path.split("/")[-3].lower()
+    except IndexError:
+        logger.error("Invalid path '%s'", path)
+        return False
+    version_number, version_prefix, version_suffix = parse_version(version)
+    esync_compatible_versions = ["esync", "lutris", "tkg", "ge", "proton"]
+    for esync_version in esync_compatible_versions:
+        if esync_version in version_prefix or esync_version in version_suffix:
+            return True
 
-    wine_ver = str(subprocess.check_output([path, "--version"]))
-    return "esync" in wine_ver.lower()
+    wine_ver = str(subprocess.check_output([path, "--version"])).lower()
+    version, *_ = wine_ver.split()
+    version_number, version_prefix, version_suffix = parse_version(version)
+
+    if "esync" in wine_ver:
+        return True
+    if "staging" in wine_ver and version_number[0] >= 4 and version_number[1] >= 6:
+        # Support for esync was merged in Wine Staging 4.6
+        return True
+    return False
+
+
+def is_version_fsync(path):
+    """Determines if a Wine build is Fsync capable
+
+    Params:
+        path: the path to the Wine version
+
+    Returns:
+        bool: True is the build is Fsync capable
+    """
+    try:
+        version = path.split("/")[-3].lower()
+    except IndexError:
+        logger.error("Invalid path '%s'", path)
+        return False
+    _, version_prefix, version_suffix = parse_version(version)
+    fsync_compatible_versions = ["fsync", "lutris", "ge", "proton"]
+    for fsync_version in fsync_compatible_versions:
+        if fsync_version in version_prefix or fsync_version in version_suffix:
+            return True
+
+    wine_ver = str(subprocess.check_output([path, "--version"])).lower()
+    if "fsync" in wine_ver:
+        return True
+    return False
 
 
 def get_real_executable(windows_executable, working_dir=None):
@@ -289,6 +368,13 @@ def esync_display_limit_warning():
     )
 
 
+def fsync_display_support_warning():
+    ErrorDialog(_(
+        "Your kernel is not patched for fsync."
+        " Please get a patched kernel to use fsync."
+    ))
+
+
 def esync_display_version_warning(on_launch=False):
     setting = "hide-wine-non-esync-version-warning"
     if on_launch:
@@ -299,9 +385,27 @@ def esync_display_version_warning(on_launch=False):
     DontShowAgainDialog(
         setting,
         "Incompatible Wine version detected",
-        secondary_message="The wine build you have selected "
-        "does not seem to support Esync.\n"
-        "Please switch to an esync-capable version such as wine-tkg.",
+        secondary_message="The Wine build you have selected "
+        "does not support Esync.\n"
+        "Please switch to an esync-capable version.",
+        checkbox_message=checkbox_message,
+    )
+    return settings.read_setting(setting) == "True"
+
+
+def fsync_display_version_warning(on_launch=False):
+    setting = "hide-wine-non-fsync-version-warning"
+    if on_launch:
+        checkbox_message = "Launch anyway and do not show this message again."
+    else:
+        checkbox_message = "Enable anyway and do not show this message again."
+
+    DontShowAgainDialog(
+        setting,
+        "Incompatible Wine version detected",
+        secondary_message="The Wine build you have selected "
+        "does not support Fsync.\n"
+        "Please switch to an fsync-capable version.",
         checkbox_message=checkbox_message,
     )
     return settings.read_setting(setting) == "True"
@@ -314,9 +418,7 @@ def get_overrides_env(overrides):
     """
     if not overrides:
         return ""
-    override_buckets = OrderedDict(
-        [("n,b", []), ("b,n", []), ("b", []), ("n", []), ("d", []), ("", [])]
-    )
+    override_buckets = OrderedDict([("n,b", []), ("b,n", []), ("b", []), ("n", []), ("d", []), ("", [])])
     for dll, value in overrides.items():
         if not value:
             value = ""

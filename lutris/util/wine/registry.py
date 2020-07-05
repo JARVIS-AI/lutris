@@ -1,9 +1,13 @@
+"""Manipulate Wine registry files"""
+# Standard Library
 import os
 import re
 from collections import OrderedDict
 from datetime import datetime
-from lutris.util.log import logger
+
+# Lutris Modules
 from lutris.util import system
+from lutris.util.log import logger
 from lutris.util.wine.wine import WINE_DEFAULT_ARCH
 
 (
@@ -28,6 +32,7 @@ DATA_TYPES = {
 
 
 class WindowsFileTime:
+
     """Utility class to deal with Windows FILETIME structures.
 
     See: https://msdn.microsoft.com/en-us/library/ms724284(v=vs.85).aspx
@@ -87,6 +92,7 @@ class WineRegistry:
         """Return the Wine prefix path (where the .reg files are located)"""
         if self.reg_filename:
             return os.path.dirname(self.reg_filename)
+        return None
 
     @staticmethod
     def get_raw_registry(reg_filename):
@@ -100,7 +106,7 @@ class WineRegistry:
             except Exception:  # pylint: disable=broad-except
                 logger.exception(
                     "Failed to registry read %s, please send attach this file in a bug report",
-                    reg_filename
+                    reg_filename,
                 )
                 registry_content = []
         return registry_content
@@ -121,7 +127,7 @@ class WineRegistry:
                     additional_values.append(line)
                 elif not add_next_to_value:
                     if additional_values:
-                        additional_values = '\n'.join(additional_values)
+                        additional_values = "\n".join(additional_values)
                         current_key.add_to_last(additional_values)
                         additional_values = []
                     current_key.parse(line)
@@ -150,9 +156,10 @@ class WineRegistry:
             raise OSError("No filename provided")
         prefix_path = os.path.dirname(path)
         if not os.path.isdir(prefix_path):
-            raise OSError("Invalid Wine prefix path %s, make sure to "
-                          "create the prefix before saving to a registry"
-                          % prefix_path)
+            raise OSError(
+                "Invalid Wine prefix path %s, make sure to "
+                "create the prefix before saving to a registry" % prefix_path
+            )
         with open(path, "w") as registry_file:
             registry_file.write(self.render())
 
@@ -160,6 +167,7 @@ class WineRegistry:
         key = self.keys.get(path)
         if key:
             return key.get_subkey(subkey)
+        return
 
     def set_value(self, path, subkey, value):
         key = self.keys.get(path)
@@ -186,7 +194,7 @@ class WineRegistry:
             key.subkeys.pop(subkey)
 
     def get_unix_path(self, windows_path):
-        windows_path = windows_path.replace("\\\\", "/")
+        windows_path = windows_path.replace("\\", "/")
         if not self.prefix_path:
             return
         drives_path = os.path.join(self.prefix_path, "dosdevices")
@@ -207,6 +215,7 @@ class WineRegistry:
 
 
 class WineRegistryKey:
+
     def __init__(self, key_def=None, path=None):
 
         self.subkeys = OrderedDict()
@@ -223,9 +232,7 @@ class WineRegistryKey:
             self.metas["time"] = windows_timestamp.to_hex()
         else:
             # Existing key loaded from file
-            self.raw_name, self.raw_timestamp = re.split(
-                re.compile(r"(?<=[^\\]\]) "), key_def, maxsplit=1
-            )
+            self.raw_name, self.raw_timestamp = re.split(re.compile(r"(?<=[^\\]\]) "), key_def, maxsplit=1)
             self.name = self.raw_name.replace("\\\\", "/").strip("[]")
 
         # Parse timestamp either as int or float
@@ -290,6 +297,23 @@ class WineRegistryKey:
             return '"{}"'.format(value)
         raise NotImplementedError("TODO")
 
+    @staticmethod
+    def decode_unicode(string):
+        chunks = re.split(r"[^\\]\\x", string)
+        out = chunks.pop(0).encode().decode("unicode_escape")
+        for chunk in chunks:
+            # We have seen file with unicode characters escaped on 1 byte (\xfa),
+            # 1.5 bytes (\x444) and 2 bytes (\x00ed). So we try 0 padding, 1 and 2
+            # (python wants its escaped sequence to be exactly on 4 characters).
+            # The exception let us know if it worked or not
+            for i in [0, 1, 2]:
+                try:
+                    out += ("\\u{}{}".format("0" * i, chunk).encode().decode("unicode_escape"))
+                    break
+                except UnicodeDecodeError:
+                    pass
+        return out
+
     def add_meta(self, meta_line):
         if not meta_line.startswith("#"):
             raise ValueError("Key metas should start with '#'")
@@ -316,7 +340,7 @@ class WineRegistryKey:
             return None
         value = self.subkeys[name]
         if value.startswith('"') and value.endswith('"'):
-            return value[1:-1]
+            return self.decode_unicode(value[1:-1])
         if value.startswith("dword:"):
             return int(value[6:], 16)
         raise ValueError("Handle %s" % value)

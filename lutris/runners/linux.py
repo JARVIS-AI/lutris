@@ -1,34 +1,43 @@
+"""Runner for Linux games"""
+# Standard Library
 import os
-import shlex
 import stat
+from gettext import gettext as _
+
+# Lutris Modules
 from lutris.runners.runner import Runner
 from lutris.util import system
+from lutris.util.strings import split_arguments
 
 
 class linux(Runner):
-    human_name = "Linux"
-    description = "Runs native games"
-    platforms = ["Linux"]
+    human_name = _("Linux")
+    description = _("Runs native games")
+    platforms = [_("Linux")]
+    entry_point_option = "exe"
 
     game_options = [
         {
             "option": "exe",
             "type": "file",
             "default_path": "game_path",
-            "label": "Executable",
-            "help": "The game's main executable file",
+            "label": _("Executable"),
+            "help": _("The game's main executable file"),
         },
         {
             "option": "args",
             "type": "string",
-            "label": "Arguments",
-            "help": "Command line arguments used when launching the game",
+            "label": _("Arguments"),
+            "help": _("Command line arguments used when launching the game"),
         },
         {
-            "option": "working_dir",
-            "type": "directory_chooser",
-            "label": "Working directory",
-            "help": (
+            "option":
+            "working_dir",
+            "type":
+            "directory_chooser",
+            "label":
+            _("Working directory"),
+            "help": _(
                 "The location where the game is run from.\n"
                 "By default, Lutris uses the directory of the "
                 "executable."
@@ -37,16 +46,20 @@ class linux(Runner):
         {
             "option": "ld_preload",
             "type": "file",
-            "label": "Preload library",
+            "label": _("Preload library"),
             "advanced": True,
-            "help": "A library to load before running the game's executable.",
+            "help": _("A library to load before running the game's executable."),
         },
         {
-            "option": "ld_library_path",
-            "type": "directory_chooser",
-            "label": "Add directory to LD_LIBRARY_PATH",
-            "advanced": True,
-            "help": (
+            "option":
+            "ld_library_path",
+            "type":
+            "directory_chooser",
+            "label":
+            _("Add directory to LD_LIBRARY_PATH"),
+            "advanced":
+            True,
+            "help": _(
                 "A directory where libraries should be searched for "
                 "first, before the standard set of directories; this is "
                 "useful when debugging a new library or using a "
@@ -63,12 +76,13 @@ class linux(Runner):
     def game_exe(self):
         """Return the game's executable's path."""
         exe = self.game_config.get("exe")
-        if exe:
-            if os.path.isabs(exe):
-                exe_path = exe
-            else:
-                exe_path = os.path.join(self.game_path, exe)
-            return exe_path
+        if not exe:
+            return
+        if os.path.isabs(exe):
+            return exe
+        if self.game_path:
+            return os.path.join(self.game_path, exe)
+        return system.find_executable(exe)
 
     def get_relative_exe(self):
         """Return a relative path if a working dir is set in the options
@@ -122,7 +136,7 @@ class linux(Runner):
         command = [self.get_relative_exe()]
 
         args = self.game_config.get("args") or ""
-        for arg in shlex.split(args):
+        for arg in split_arguments(args):
             command.append(arg)
         launch_info["command"] = command
         return launch_info

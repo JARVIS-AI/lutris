@@ -1,19 +1,24 @@
-import re
+# Standard Library
 import os
+import re
 import shutil
-from configparser import ConfigParser
 from collections import Counter
+from configparser import RawConfigParser
+from gettext import gettext as _
+
+# Lutris Modules
 from lutris import settings
+from lutris.gui.dialogs import NoticeDialog
 from lutris.runners.runner import Runner
 from lutris.util import joypad, system
-from lutris.gui.dialogs import NoticeDialog
 
 
 class reicast(Runner):
-    human_name = "Reicast"
-    description = "Sega Dreamcast emulator"
-    platforms = ["Sega Dreamcast"]
+    human_name = _("Reicast")
+    description = _("Sega Dreamcast emulator")
+    platforms = [_("Sega Dreamcast")]
     runner_executable = "reicast/reicast.elf"
+    entry_point_option = "iso"
 
     joypads = None
 
@@ -21,8 +26,9 @@ class reicast(Runner):
         {
             "option": "iso",
             "type": "file",
-            "label": "Disc image file",
-            "help": ("The game data.\n" "Supported formats: ISO, CDI"),
+            "label": _("Disc image file"),
+            "help": _("The game data.\n"
+                      "Supported formats: ISO, CDI"),
         }
     ]
 
@@ -33,40 +39,41 @@ class reicast(Runner):
             {
                 "option": "fullscreen",
                 "type": "bool",
-                "label": "Fullscreen",
+                "label": _("Fullscreen"),
                 "default": False,
             },
             {
                 "option": "device_id_1",
                 "type": "choice",
-                "label": "Joypad 1",
+                "label": _("Joypad 1"),
                 "choices": self.get_joypads,
                 "default": "-1",
             },
             {
                 "option": "device_id_2",
                 "type": "choice",
-                "label": "Joypad 2",
+                "label": _("Joypad 2"),
                 "choices": self.get_joypads,
                 "default": "-1",
             },
             {
                 "option": "device_id_3",
                 "type": "choice",
-                "label": "Joypad 3",
+                "label": _("Joypad 3"),
                 "choices": self.get_joypads,
                 "default": "-1",
             },
             {
                 "option": "device_id_4",
                 "type": "choice",
-                "label": "Joypad 4",
+                "label": _("Joypad 4"),
                 "choices": self.get_joypads,
                 "default": "-1",
             },
         ]
 
     def install(self, version=None, downloader=None, callback=None):
+
         def on_runner_installed(*args):
             mapping_path = system.create_folder("~/.reicast/mappings")
             mapping_source = os.path.join(settings.RUNNER_DIR, "reicast/mappings")
@@ -74,9 +81,7 @@ class reicast(Runner):
                 shutil.copy(os.path.join(mapping_source, mapping_file), mapping_path)
 
             system.create_folder("~/.reicast/data")
-            NoticeDialog(
-                "You have to copy valid BIOS files to ~/.reicast/data " "before playing"
-            )
+            NoticeDialog(_("You have to copy valid BIOS files to ~/.reicast/data before playing"))
 
         super(reicast, self).install(version, downloader, on_runner_installed)
 
@@ -106,12 +111,16 @@ class reicast(Runner):
 
     @staticmethod
     def write_config(config):
-        parser = ConfigParser()
+        # use RawConfigParser to preserve case-sensitive configs written by Reicast
+        # otherwise, Reicast will write with mixed-case and Lutris will overwrite with all lowercase
+        #   which will confuse Reicast
+        parser = RawConfigParser()
+        parser.optionxform = lambda option: option
 
         config_path = os.path.expanduser("~/.reicast/emu.cfg")
         if system.path_exists(config_path):
             with open(config_path, "r") as config_file:
-                parser.read(config_file)
+                parser.read_file(config_file)
 
         for section in config:
             if not parser.has_section(section):
@@ -125,9 +134,13 @@ class reicast(Runner):
     def play(self):
         fullscreen = "1" if self.runner_config.get("fullscreen") else "0"
         reicast_config = {
-            "x11": {"fullscreen": fullscreen},
+            "x11": {
+                "fullscreen": fullscreen
+            },
             "input": {},
-            "players": {"nb": "1"},
+            "players": {
+                "nb": "1"
+            },
         }
         players = 1
         reicast_config["input"] = {}

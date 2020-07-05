@@ -13,13 +13,11 @@ __all__ = (
     "dosbox",
     # Multi-system
     "mame",
-    "mess",
     "mednafen",
     "scummvm",
     "residualvm",
     "libretro",
     "ags",
-    "higan",
     # Commdore
     "fsuae",
     "vice",
@@ -34,7 +32,7 @@ __all__ = (
     "dolphin",
     "desmume",
     "citra",
-    "melonds",
+    "yuzu",
     # Sony
     "ppsspp",
     "pcsx2",
@@ -43,7 +41,6 @@ __all__ = (
     "osmose",
     "dgen",
     "reicast",
-    "redream",
     # Fantasy consoles
     "pico8",
     # Misc legacy systems
@@ -51,31 +48,34 @@ __all__ = (
     "jzintv",
     "o2em",
     "zdoom",
-    "tic80",
 )
 
 
 class InvalidRunner(Exception):
+
     def __init__(self, message):
+        super().__init__(message)
         self.message = message
 
 
 class RunnerInstallationError(Exception):
+
     def __init__(self, message):
+        super().__init__(message)
         self.message = message
 
 
 class NonInstallableRunnerError(Exception):
+
     def __init__(self, message):
+        super().__init__(message)
         self.message = message
 
 
 def get_runner_module(runner_name):
     if runner_name not in __all__:
         raise InvalidRunner("Invalid runner name '%s'" % runner_name)
-    return __import__(
-        "lutris.runners.%s" % runner_name, globals(), locals(), [runner_name], 0
-    )
+    return __import__("lutris.runners.%s" % runner_name, globals(), locals(), [runner_name], 0)
 
 
 def import_runner(runner_name):

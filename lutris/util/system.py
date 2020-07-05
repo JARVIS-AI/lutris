@@ -1,9 +1,9 @@
 """System utilities"""
 import hashlib
-import signal
 import os
 import re
 import shutil
+import signal
 import string
 import subprocess
 
@@ -11,7 +11,7 @@ from lutris.util.linux import LINUX_SYSTEM
 from lutris.util.log import logger
 
 
-def execute(command, env=None, cwd=None, log_errors=False, quiet=False, shell=False):
+def execute(command, env=None, cwd=None, log_errors=False, quiet=False, shell=False, timeout=None):
     """
         Execute a system command and return its results.
 
@@ -21,6 +21,7 @@ def execute(command, env=None, cwd=None, log_errors=False, quiet=False, shell=Fa
             cwd (str): Working directory
             log_errors (bool): Pipe stderr to stdout (might cause slowdowns)
             quiet (bool): Do not display log messages
+            timeout (int): Number of seconds the program is allowed to run, disabled by default
 
         Returns:
             str: stdout output
@@ -29,13 +30,13 @@ def execute(command, env=None, cwd=None, log_errors=False, quiet=False, shell=Fa
     # Check if the executable exists
     if not command:
         logger.error("No executable provided!")
-        return
+        return ""
     if os.path.isabs(command[0]) and not path_exists(command[0]):
         logger.error("No executable found in %s", command)
-        return
+        return ""
 
     if not quiet:
-        logger.debug("Executing %s", " ".join(command))
+        logger.debug("Executing %s", " ".join([str(i) for i in command]))
 
     # Set up environment
     existing_env = os.environ.copy()
@@ -55,10 +56,13 @@ def execute(command, env=None, cwd=None, log_errors=False, quiet=False, shell=Fa
             stderr=subprocess.PIPE if log_errors else subprocess.DEVNULL,
             env=existing_env,
             cwd=cwd,
-        ).communicate()
+        ).communicate(timeout=timeout)
     except (OSError, TypeError) as ex:
         logger.error("Could not run command %s (env: %s): %s", command, env, ex)
-        return
+        return ""
+    except subprocess.TimeoutExpired:
+        logger.error("Command %s after %s seconds", command, timeout)
+        return ""
     if stderr and log_errors:
         logger.error(stderr)
     return stdout.decode(errors="replace").strip()
@@ -72,7 +76,7 @@ def get_md5_hash(filename):
             for chunk in iter(lambda: _file.read(8192), b""):
                 md5.update(chunk)
     except IOError:
-        print("Error reading %s" % filename)
+        logger.warning("Error reading %s", filename)
         return False
     return md5.hexdigest()
 
@@ -156,9 +160,7 @@ def substitute(string_template, variables):
     # Replace the dashes with underscores in the mapping and template
     variables = dict((k.replace("-", "_"), v) for k, v in variables.items())
     for identifier in identifiers:
-        string_template = string_template.replace(
-            "${}".format(identifier), "${}".format(identifier.replace("-", "_"))
-        )
+        string_template = string_template.replace("${}".format(identifier), "${}".format(identifier.replace("-", "_")))
 
     template = string.Template(string_template)
     if string_template in list(variables.keys()):
@@ -184,20 +186,25 @@ def merge_folders(source, destination):
             # logger.debug("Copying %s", filename)
             if not os.path.exists(dst_abspath):
                 os.makedirs(dst_abspath)
-            shutil.copy(
-                os.path.join(dirpath, filename), os.path.join(dst_abspath, filename)
-            )
+            shutil.copy(os.path.join(dirpath, filename), os.path.join(dst_abspath, filename))
 
 
 def remove_folder(path):
-    """Delete a folder specified by path"""
+    """Delete a folder specified by path
+    Returns true if the folder was successfully removed.
+    """
     if not os.path.exists(path):
         logger.warning("Non existent path: %s", path)
         return
     logger.debug("Removing folder %s", path)
     if os.path.samefile(os.path.expanduser("~"), path):
         raise RuntimeError("Lutris tried to erase home directory!")
-    shutil.rmtree(path)
+    try:
+        shutil.rmtree(path)
+    except OSError as ex:
+        logger.error("Failed to remove folder %s: %s (Error code %s)", path, ex.strerror, ex.errno)
+        return False
+    return True
 
 
 def create_folder(path):
@@ -233,7 +240,8 @@ def is_removeable(path, excludes=None):
 
 def fix_path_case(path):
     """Do a case insensitive check, return the real path with correct case."""
-    if os.path.exists(path):
+    if not path or os.path.exists(path):
+        # If a path isn't provided or it exists as is, return it.
         return path
     parts = path.strip("/").split("/")
     current_path = "/"
@@ -296,16 +304,19 @@ def reverse_expanduser(path):
     return path
 
 
-def path_exists(path, check_symlinks=False):
+def path_exists(path, check_symlinks=False, exclude_empty=False):
     """Wrapper around system.path_exists that doesn't crash with empty values
 
     Params:
         path (str): File to the file to check
         check_symlinks (bool): If the path is a broken symlink, return False
+        exclude_empty (bool): If true, consider 0 bytes files as non existing
     """
     if not path:
         return False
     if os.path.exists(path):
+        if exclude_empty:
+            return os.stat(path).st_size > 0
         return True
     if os.path.islink(path):
         logger.warning("%s is a broken link", path)
@@ -317,7 +328,10 @@ def reset_library_preloads():
     """Remove library preloads from environment"""
     for key in ("LD_LIBRARY_PATH", "LD_PRELOAD"):
         if os.environ.get(key):
-            del os.environ[key]
+            try:
+                del os.environ[key]
+            except OSError:
+                logger.error("Failed to delete environment variable %s", key)
 
 
 def run_once(function):
@@ -329,4 +343,16 @@ def run_once(function):
         if first_run:
             first_run = False
             return function(*args)
+
     return fn_wrapper
+
+
+def get_existing_parent(path):
+    """Return the 1st existing parent for a folder (or itself if the path
+    exists and is a directory). returns None, when none of the parents exists.
+    """
+    if path == "":
+        return None
+    if os.path.exists(path) and not os.path.isfile(path):
+        return path
+    return get_existing_parent(os.path.dirname(path))
